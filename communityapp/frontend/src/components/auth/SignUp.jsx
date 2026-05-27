@@ -32,7 +32,7 @@ export default function SignUp() {
     }
     try {
       setBusy(true)
-      const response = await axios.post(`${serverUrl}/signup`, formData, { headers: { 'Content-Type': 'application/json' } })
+      const response = await axios.post(`${serverUrl}/api/signup`, formData, { headers: { 'Content-Type': 'application/json' } })
       if (response.status === 201) {
         navigate('/login')
       }
