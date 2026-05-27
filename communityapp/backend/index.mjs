@@ -13,6 +13,12 @@ import messageModel from './src/models/messageModel.mjs'
 import { getOrCreateConversation } from './src/controllers/messageController.mjs'
 const app = express()
 app.use(cors({ exposedHeaders: ['authorization'] }))
+app.use(
+  cors({
+    origin: "https://communityapp1-6fqz.vercel.app",
+    credentials: true,
+  }),
+);
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 mongoose.connect(MONGO_URI).then(() => {
