@@ -25,7 +25,7 @@ export default function Login() {
     }
     try {
       setBusy(true)
-      const response = await axios.post(`${serverUrl}/api/login`, formData,{'Content-Type': 'application/json'})
+      const response = await axios.post(`${serverUrl}/login`, formData,{'Content-Type': 'application/json'})
       if(response.status === 200) {
         // Prefer token from JSON body (works with CORS); fallback to header.
         const tokenFromBody = response.data?.token

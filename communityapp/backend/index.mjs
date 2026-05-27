@@ -15,7 +15,7 @@ const app = express()
 app.use(cors({ exposedHeaders: ['authorization'] }))
 app.use(
   cors({
-    origin: "https://communityapp1-6fqz.vercel.app",
+    origin: "https://communityapp1.vercel.app",
     credentials: true,
   }),
 );
