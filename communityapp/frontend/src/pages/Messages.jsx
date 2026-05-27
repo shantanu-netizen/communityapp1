@@ -1,0 +1,442 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { io } from 'socket.io-client'
+import axios from 'axios'
+import { useNavigate } from 'react-router-dom'
+import HeaderNav from '../components/navs/HeaderNav'
+import { serverUrl } from '../../config.mjs'
+import styles from './Messages.module.css'
+
+export default function Messages() {
+  const navigate = useNavigate()
+  const token = useMemo(() => localStorage.getItem('token'), [])
+  const currentUserId = localStorage.getItem('userId') || ''
+
+  const [conversations, setConversations] = useState([])
+  const [activeConvId, setActiveConvId] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [text, setText] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [typing, setTyping] = useState(false)
+  const [otherTyping, setOtherTyping] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editingText, setEditingText] = useState('')
+  const [newChatOpen, setNewChatOpen] = useState(false)
+  const [userQuery, setUserQuery] = useState('')
+  const [userResults, setUserResults] = useState([])
+  const [userLoading, setUserLoading] = useState(false)
+
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
+
+  const socketRef = useRef(null)
+  const bottomRef = useRef(null)
+  const typingTimer = useRef(null)
+
+  const activeConversation = useMemo(
+    () => conversations.find((c) => String(c._id) === String(activeConvId)) || null,
+    [conversations, activeConvId]
+  )
+
+  const loadInbox = async () => {
+    if (!token) return
+    try {
+      const res = await axios.get(`${serverUrl}/conversations`, {
+        headers: authHeaders,
+        params: { limit: 50 },
+      })
+      setConversations(res.data?.conversations || [])
+      if (!activeConvId && (res.data?.conversations || []).length > 0) {
+        setActiveConvId(res.data.conversations[0]._id)
+      }
+    } catch (err) {
+      if (err?.response?.status === 401) navigate('/login', { replace: true })
+      setError(err?.response?.data?.message || 'Could not load conversations.')
+    }
+  }
+
+  const searchUsers = async () => {
+    if (!token) return
+    setUserLoading(true)
+    setError('')
+    try {
+      const res = await axios.get(`${serverUrl}/users`, {
+        headers: authHeaders,
+        params: { page: 1, limit: 20, ...(userQuery.trim() ? { q: userQuery.trim() } : {}) },
+      })
+      setUserResults(res.data?.users || [])
+    } catch (err) {
+      if (err?.response?.status === 401) navigate('/login', { replace: true })
+      setError(err?.response?.data?.message || 'Could not search users.')
+    } finally {
+      setUserLoading(false)
+    }
+  }
+
+  const startChat = async (otherUser) => {
+    if (!otherUser?._id || !token) return
+    setError('')
+    try {
+      const res = await axios.post(
+        `${serverUrl}/conversations`,
+        { otherUserId: otherUser._id },
+        { headers: { ...authHeaders, 'Content-Type': 'application/json' } }
+      )
+      const convId = res.data?.conversation?._id
+      if (convId) {
+        await loadInbox()
+        setActiveConvId(convId)
+        setNewChatOpen(false)
+        setUserQuery('')
+        setUserResults([])
+      }
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Could not start chat.')
+    }
+  }
+
+  const loadMessages = async (conversationId) => {
+    if (!token || !conversationId) return
+    setLoading(true)
+    setError('')
+    try {
+      const res = await axios.get(`${serverUrl}/conversations/${conversationId}/messages`, {
+        headers: authHeaders,
+        params: { page: 1, limit: 100 },
+      })
+      setMessages(res.data?.messages || [])
+      await axios.post(`${serverUrl}/conversations/${conversationId}/read`, {}, { headers: authHeaders })
+    } catch (err) {
+      if (err?.response?.status === 401) navigate('/login', { replace: true })
+      setError(err?.response?.data?.message || 'Could not load messages.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!token) {
+      navigate('/login', { replace: true })
+      return
+    }
+    loadInbox()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, navigate])
+
+  useEffect(() => {
+    if (!token) return
+    const socket = io(serverUrl, { auth: { token } })
+    socketRef.current = socket
+
+    socket.on('connect_error', () => {
+      setError('Messaging connection failed.')
+    })
+
+    socket.on('message_new', (msg) => {
+      if (!msg?.conversationId) return
+      setMessages((prev) => {
+        if (String(msg.conversationId) !== String(activeConvId)) return prev
+        if (prev.some((m) => String(m._id) === String(msg._id))) return prev
+        return [...prev, msg]
+      })
+      loadInbox()
+      if (String(msg.conversationId) === String(activeConvId)) {
+        socket.emit('read', { conversationId: msg.conversationId })
+      }
+    })
+
+    socket.on('message_edited', (payload) => {
+      if (!payload?.messageId) return
+      if (String(payload.conversationId) !== String(activeConvId)) return
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m._id) === String(payload.messageId)
+            ? { ...m, text: payload.text, isEdited: true, editedAt: payload.editedAt }
+            : m
+        )
+      )
+      loadInbox()
+    })
+
+    socket.on('message_deleted', (payload) => {
+      if (!payload?.messageId) return
+      if (String(payload.conversationId) !== String(activeConvId)) return
+      setMessages((prev) =>
+        prev.map((m) =>
+          String(m._id) === String(payload.messageId)
+            ? { ...m, status: 'deleted', text: '[deleted]' }
+            : m
+        )
+      )
+      loadInbox()
+    })
+
+    socket.on('typing', ({ conversationId, userId, isTyping }) => {
+      if (String(conversationId) !== String(activeConvId)) return
+      if (String(userId) === String(currentUserId)) return
+      setOtherTyping(!!isTyping)
+    })
+
+    socket.on('inbox_updated', () => {
+      loadInbox()
+    })
+
+    socket.on('read', ({ conversationId }) => {
+      if (String(conversationId) !== String(activeConvId)) return
+      // no-op for now (UI can show read receipts later)
+    })
+
+    return () => {
+      socket.disconnect()
+      socketRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, activeConvId])
+
+  useEffect(() => {
+    if (!activeConvId || !socketRef.current) return
+    socketRef.current.emit('join_conversation', { conversationId: activeConvId })
+    loadMessages(activeConvId)
+    setOtherTyping(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConvId])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages.length, otherTyping])
+
+  const send = async () => {
+    const trimmed = text.trim()
+    if (!trimmed || !socketRef.current || !activeConvId) return
+    setText('')
+    socketRef.current.emit('send_message', { conversationId: activeConvId, text: trimmed })
+  }
+
+  const formatTime = (iso) => {
+    try {
+      return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return ''
+    }
+  }
+
+  const startEdit = (m) => {
+    if (String(m.senderId) !== String(currentUserId)) return
+    if (m.status === 'deleted') return
+    setEditingId(m._id)
+    setEditingText(m.text || '')
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditingText('')
+  }
+
+  const saveEdit = () => {
+    const trimmed = editingText.trim()
+    if (!trimmed || !socketRef.current || !editingId) return
+    socketRef.current.emit('edit_message', { messageId: editingId, text: trimmed })
+    cancelEdit()
+  }
+
+  const deleteMsg = (m) => {
+    if (String(m.senderId) !== String(currentUserId)) return
+    if (!socketRef.current) return
+    if (!window.confirm('Delete this message?')) return
+    socketRef.current.emit('delete_message', { messageId: m._id })
+    if (String(editingId) === String(m._id)) cancelEdit()
+  }
+
+  const onTyping = (val) => {
+    setText(val)
+    if (!socketRef.current || !activeConvId) return
+
+    if (!typing) {
+      setTyping(true)
+      socketRef.current.emit('typing', { conversationId: activeConvId, isTyping: true })
+    }
+    if (typingTimer.current) clearTimeout(typingTimer.current)
+    typingTimer.current = setTimeout(() => {
+      setTyping(false)
+      socketRef.current?.emit('typing', { conversationId: activeConvId, isTyping: false })
+    }, 900)
+  }
+
+  return (
+    <div className={styles.page}>
+      <HeaderNav />
+      <div className={styles.wrap}>
+        <aside className={styles.sidebar}>
+          <div className={styles.sidebarHeader}>
+            <h1 className={styles.title}>Messaging</h1>
+            <button type="button" className={styles.newBtn} onClick={() => setNewChatOpen(true)}>
+              New
+            </button>
+          </div>
+          {error && <div className={styles.error}>{error}</div>}
+          <div className={styles.convList}>
+            {conversations.map((c) => {
+              const other = c.otherUser
+              const active = String(c._id) === String(activeConvId)
+              return (
+                <button
+                  key={c._id}
+                  type="button"
+                  className={`${styles.convRow} ${active ? styles.convRowActive : ''}`}
+                  onClick={() => setActiveConvId(c._id)}
+                >
+                  <span className={styles.avatar} aria-hidden>
+                    {other?.profilePicture ? (
+                      <img src={other.profilePicture} alt="" className={styles.avatarImg} />
+                    ) : (
+                      (other?.username || 'M').slice(0, 1).toUpperCase()
+                    )}
+                  </span>
+                  <span className={styles.convMeta}>
+                    <span className={styles.convName}>{other?.username || 'Member'}</span>
+                    <span className={styles.convPreview}>{c.lastMessageText || 'Say hi…'}</span>
+                  </span>
+                  {c.unreadCount > 0 && <span className={styles.unread}>{c.unreadCount}</span>}
+                </button>
+              )
+            })}
+          </div>
+        </aside>
+
+        <section className={styles.chat}>
+          {!activeConversation && <div className={styles.empty}>Select a conversation.</div>}
+          {activeConversation && (
+            <>
+              <div className={styles.chatHeader}>
+                <div className={styles.chatTitle}>@{activeConversation?.otherUser?.username || 'Member'}</div>
+                {otherTyping && <div className={styles.typing}>Typing…</div>}
+              </div>
+
+              <div className={styles.msgList}>
+                {loading && <div className={styles.hint}>Loading…</div>}
+                {!loading &&
+                  messages.map((m) => {
+                    const mine = String(m.senderId) === String(currentUserId)
+                    const isEditing = String(editingId) === String(m._id)
+                    return (
+                      <div key={m._id} className={`${styles.msgRow} ${mine ? styles.msgRowMine : ''}`}>
+                        <div className={`${styles.bubble} ${mine ? styles.bubbleMine : styles.bubbleOther}`}>
+                          {!isEditing ? (
+                            <>
+                              <div className={styles.msgText}>{m.text}</div>
+                              <div className={styles.msgMeta}>
+                                {m.isEdited && m.status !== 'deleted' ? 'edited · ' : ''}
+                                {formatTime(m.createdAt)}
+                              </div>
+                            </>
+                          ) : (
+                            <div className={styles.editBox}>
+                              <input
+                                className={styles.editInput}
+                                value={editingText}
+                                onChange={(e) => setEditingText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveEdit()
+                                  if (e.key === 'Escape') cancelEdit()
+                                }}
+                              />
+                              <div className={styles.editActions}>
+                                <button type="button" className={styles.smallBtn} onClick={cancelEdit}>
+                                  Cancel
+                                </button>
+                                <button type="button" className={styles.smallBtnPrimary} onClick={saveEdit} disabled={!editingText.trim()}>
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {mine && !isEditing && m.status !== 'deleted' && (
+                          <div className={styles.msgTools}>
+                            <button type="button" className={styles.toolBtn} onClick={() => startEdit(m)}>
+                              Edit
+                            </button>
+                            <button type="button" className={styles.toolBtnDanger} onClick={() => deleteMsg(m)}>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                <div ref={bottomRef} />
+              </div>
+
+              <div className={styles.composer}>
+                <input
+                  className={styles.input}
+                  value={text}
+                  onChange={(e) => onTyping(e.target.value)}
+                  placeholder="Write a message…"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') send()
+                  }}
+                />
+                <button type="button" className={styles.sendBtn} onClick={send} disabled={!text.trim()}>
+                  Send
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+
+      {newChatOpen && (
+        <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Start a new chat">
+          <button type="button" className={styles.backdrop} aria-label="Close" onClick={() => setNewChatOpen(false)} />
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <h2 className={styles.modalTitle}>Start a chat</h2>
+              <button type="button" className={styles.closeBtn} onClick={() => setNewChatOpen(false)}>
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.searchRow}>
+                <input
+                  className={styles.searchInput}
+                  value={userQuery}
+                  onChange={(e) => setUserQuery(e.target.value)}
+                  placeholder="Search users…"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') searchUsers()
+                  }}
+                />
+                <button type="button" className={styles.searchBtn} onClick={searchUsers} disabled={userLoading}>
+                  {userLoading ? '…' : 'Search'}
+                </button>
+              </div>
+
+              {userLoading && <div className={styles.hint}>Searching…</div>}
+              {!userLoading && userResults.length === 0 && <div className={styles.hint}>No users found.</div>}
+
+              <div className={styles.userList}>
+                {userResults.map((u) => (
+                  <button key={u._id} type="button" className={styles.userRow} onClick={() => startChat(u)}>
+                    <span className={styles.avatar} aria-hidden>
+                      {u.profilePicture ? (
+                        <img src={u.profilePicture} alt="" className={styles.avatarImg} />
+                      ) : (
+                        (u.username || 'M').slice(0, 1).toUpperCase()
+                      )}
+                    </span>
+                    <span className={styles.userMeta}>
+                      <span className={styles.convName}>{u.username || 'Member'}</span>
+                      <span className={styles.convPreview}>{u.occupation || u.bio || 'Tap to message'}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
