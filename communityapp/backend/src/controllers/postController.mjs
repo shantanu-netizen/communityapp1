@@ -10,6 +10,12 @@ import {
     validateJobPayload,
 } from "../utils/validate.mjs";
 
+const getPublicBaseUrl = (req) => {
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http'
+    const host = req.get('host')
+    return host ? `${proto}://${host}` : ''
+}
+
 const createPost = async (req, res) => {
     try {
         const userId = req.user?.id
@@ -20,7 +26,7 @@ const createPost = async (req, res) => {
         let mediaUrl = ''
         let inferredMediaType = ''
         if (req.file) {
-            mediaUrl = await uploadProfile(req.file)
+            mediaUrl = await uploadProfile(req.file, { publicBaseUrl: getPublicBaseUrl(req) })
             if (req.file.mimetype?.startsWith('image/')) inferredMediaType = 'image'
             else if (req.file.mimetype?.startsWith('video/')) inferredMediaType = 'video'
         }
@@ -28,7 +34,7 @@ const createPost = async (req, res) => {
         const payload = {
             ...req.body,
             media: req.body?.media || mediaUrl,
-            mediaType: req.body?.mediaType || inferredMediaType || 'text',
+            mediaType: inferredMediaType || req.body?.mediaType || 'text',
         }
 
         const postTypeRaw = typeof req.body?.postType === 'string' ? req.body.postType : ''
@@ -74,7 +80,7 @@ const createPost = async (req, res) => {
 
         return res.status(201).send({ message: 'Post created successfully', post })
     } catch (error) {
-        return res.status(500).send({ message: 'Internal server error' })
+        return res.status(500).send({ message: error?.message || 'Internal server error' })
     }
 }
 

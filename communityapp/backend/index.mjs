@@ -1,8 +1,10 @@
 import express from 'express'
 import mongoose from 'mongoose'
 import cors from 'cors'
-import { PORT, MONGO_URI } from './config.mjs'
+import { PORT, MONGO_URI, CORS_ORIGINS } from './config.mjs'
 import routes from './src/routes.mjs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import http from 'http'
 import { Server as SocketIOServer } from 'socket.io'
 import jwt from 'jsonwebtoken'
@@ -11,16 +13,33 @@ import { validateObjectId } from './src/utils/validate.mjs'
 import conversationModel from './src/models/conversationModel.mjs'
 import messageModel from './src/models/messageModel.mjs'
 import { getOrCreateConversation } from './src/controllers/messageController.mjs'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 const app = express()
-app.use(cors({ exposedHeaders: ['authorization'] }))
-app.use(
-  cors({
-    origin: "https://communityapp1.vercel.app",
+
+// Keep the browser clients that are allowed to call this API in one place.
+// CORS_ORIGINS is a comma-separated list set in Render (or another host).
+const allowedOrigins = new Set([
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://communityapp1.vercel.app',
+    ...(CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
+])
+
+const isAllowedOrigin = (origin) => !origin || allowedOrigins.has(origin)
+const corsOptions = {
+    origin(origin, callback) {
+        if (isAllowedOrigin(origin)) return callback(null, true)
+        return callback(new Error(`Origin not allowed by CORS: ${origin}`))
+    },
     credentials: true,
-  }),
-);
+    exposedHeaders: ['authorization'],
+}
+
+app.use(cors(corsOptions))
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 mongoose.connect(MONGO_URI).then(() => {
     console.log('Connected to MongoDB')
 }).catch((err) => {
@@ -30,10 +49,7 @@ app.use('/', routes);
 
 const server = http.createServer(app)
 const io = new SocketIOServer(server, {
-    cors: {
-        origin: true,
-        credentials: true,
-    },
+    cors: corsOptions,
 })
 
 io.use((socket, next) => {
