@@ -11,12 +11,11 @@ export default function Profile() {
   const navigate = useNavigate()
   const { userId: routeUserId, username: routeUsername } = useParams()
   const token = useMemo(() => localStorage.getItem('token'), [])
-  const currentUserId = localStorage.getItem('userId') || ''
-  const isOwnProfile = String(routeUserId) === String(currentUserId)
 
   const [user, setUser] = useState(null)
   /** Public profile when viewing someone else */
   const [publicProfile, setPublicProfile] = useState(null)
+  const [isOwnProfile, setIsOwnProfile] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -44,16 +43,31 @@ export default function Profile() {
   const authHeaders = { Authorization: `Bearer ${token}` }
 
   const loadProfile = useCallback(async () => {
-    if (!routeUserId) return
+    if (!token) return
     setLoading(true)//Sets loading to true and clears any previous error.
     setError('')
     try {
-      if (isOwnProfile) {
-        const res = await axios.get(`${serverUrl}/profile`, { headers: authHeaders })
-        setUser(res.data?.user || null)
+      const ownRes = await axios.get(`${serverUrl}/profile`, { headers: authHeaders })
+      const ownUser = ownRes.data?.user || null
+      const ownUserId = ownUser?._id || ownUser?.id || ''
+      const ownUsername = ownUser?.username || ''
+      if (ownUserId) localStorage.setItem('userId', ownUserId)
+      if (ownUsername) localStorage.setItem('username', ownUsername)
+
+      const routeIsMissing = !routeUserId || routeUserId === 'null' || routeUserId === 'undefined'
+      const routeIsOwnProfile = routeIsMissing || String(routeUserId) === String(ownUserId)
+
+      if (routeIsOwnProfile) {
+        setIsOwnProfile(true)
+        setUser(ownUser)
         setPublicProfile(null)
+
+        if (ownUserId && ownUsername && (routeIsMissing || routeUsername !== ownUsername)) {
+          navigate(`/${ownUserId}/${ownUsername}/profile`, { replace: true })
+        }
       } else {
         const res = await axios.get(`${serverUrl}/users/${routeUserId}`, { headers: authHeaders })
+        setIsOwnProfile(false)
         setPublicProfile(res.data?.profile || null)
         setUser(null)
       }
@@ -66,7 +80,7 @@ export default function Profile() {
     } finally {
       setLoading(false)
     }
-  }, [routeUserId, isOwnProfile, token, navigate])//it only changes when one of those values changes.
+  }, [routeUserId, routeUsername, token, navigate])//it only changes when one of those values changes.
 
   useEffect(() => {
     if (!token) {
