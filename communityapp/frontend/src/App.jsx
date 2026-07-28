@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Navigate, Routes, Route } from 'react-router-dom'
 import Home from './pages/Home'
 import SignUp from './components/auth/SignUp'
 import Login from './components/auth/Login'
@@ -12,22 +12,38 @@ import Notification from './pages/Notification'
 import Messages from './pages/Messages'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+
+const isAuthenticated = () => Boolean(localStorage.getItem('token'))
+
+function RequireAuth({ children }) {
+  return isAuthenticated() ? children : <Navigate to="/signup" replace />
+}
+
+function PublicOnly({ children }) {
+  return isAuthenticated() ? <Navigate to="/" replace /> : children
+}
+
+function StartPage() {
+  return isAuthenticated() ? <Home /> : <Navigate to="/signup" replace />
+}
+
 export default function App() {
   return (
     <div>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/signup" element={<SignUp />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/:userId/:username/profile" element={<Profile />} />
-        <Route path="/:userId/posts" element={<Posts />} />
-        <Route path="/:userId/reels" element={<Reels />} />
-        <Route path="/:userId/connect" element={<Connect />} />
-        <Route path="/:userId/jobs" element={<Jobs />} />
-        <Route path="/:userId/notifications" element={<Notification />} />
-        <Route path="/:userId/messages" element={<Messages />} />
+        <Route path="/" element={<StartPage />} />
+        <Route path="/signup" element={<PublicOnly><SignUp /></PublicOnly>} />
+        <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+        <Route path="/forgot-password" element={<PublicOnly><ForgotPassword /></PublicOnly>} />
+        <Route path="/reset-password" element={<PublicOnly><ResetPassword /></PublicOnly>} />
+        <Route path="/:userId/:username/profile" element={<RequireAuth><Profile /></RequireAuth>} />
+        <Route path="/:userId/posts" element={<RequireAuth><Posts /></RequireAuth>} />
+        <Route path="/:userId/reels" element={<RequireAuth><Reels /></RequireAuth>} />
+        <Route path="/:userId/connect" element={<RequireAuth><Connect /></RequireAuth>} />
+        <Route path="/:userId/jobs" element={<RequireAuth><Jobs /></RequireAuth>} />
+        <Route path="/:userId/notifications" element={<RequireAuth><Notification /></RequireAuth>} />
+        <Route path="/:userId/messages" element={<RequireAuth><Messages /></RequireAuth>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
   )
