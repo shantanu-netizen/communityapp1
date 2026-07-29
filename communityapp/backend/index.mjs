@@ -23,6 +23,7 @@ const allowedOrigins = new Set([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'https://communityapp1.vercel.app',
+    'https://communityapp1-i73i.vercel.app',
     ...(CORS_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean),
 ])
 
