@@ -29,13 +29,19 @@ const allowedOrigins = new Set([
 
 const isAllowedOrigin = (origin) => !origin || allowedOrigins.has(origin)
 const corsOptions = {
-    origin(origin, callback) {
-        if (isAllowedOrigin(origin)) return callback(null, true)
-        return callback(new Error(`Origin not allowed by CORS: ${origin}`))
-    },
-    credentials: true,
-    exposedHeaders: ['authorization'],
-}
+  origin(origin, callback) {
+    console.log("Origin:", origin);
+
+    if (isAllowedOrigin(origin)) {
+      console.log("Allowed");
+      return callback(null, true);
+    }
+
+    console.log("Blocked:", origin);
+    return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
+  credentials: true,
+};
 
 app.use(cors(corsOptions))
 app.use(express.json())
